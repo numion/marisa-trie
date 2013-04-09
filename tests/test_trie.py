@@ -20,6 +20,21 @@ def test_build():
     assert non_key not in trie
 
 
+def test_codec():
+    keys = get_random_words(1000)
+    # default utf8 decoder
+    trie = marisa_trie.Trie(keys, encode=lambda s: s.upper().encode('utf8'))
+    for key in keys:
+        assert key in trie
+        assert trie.restore_key(trie.key_id(key)) == key.upper()
+
+    # default utf8 encoder
+    trie = marisa_trie.Trie(keys, decode=lambda s: s.decode('utf8').upper())
+    for key in keys:
+        assert key in trie
+        assert trie.restore_key(trie.key_id(key)) == key.upper()
+
+
 def test_contains():
     trie = marisa_trie.Trie()
     assert 'foo' not in trie

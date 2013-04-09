@@ -56,6 +56,23 @@ LABEL_ORDER = base.MARISA_LABEL_ORDER
 WEIGHT_ORDER = base.MARISA_WEIGHT_ORDER
 DEFAULT_ORDER = base.MARISA_DEFAULT_ORDER
 
+ctypedef bytes (*encode_func)(object s, void* context)
+ctypedef object (*decode_func)(const key.Key* key, void* context)
+
+cdef bytes uencode(object s, void* context):
+    return (<unicode>s).encode('utf8')
+
+cdef object udecode(const key.Key* key, void* context):
+    return key.ptr()[:key.length()].decode('utf8')
+
+cdef bytes pyencode(object s, void* context):
+    cdef object f = <object>context
+    return <bytes>f(s)
+
+cdef object pydecode(const key.Key* key, void* context):
+    cdef object f = <object>context
+    return f(key.ptr()[:key.length()])
+
 
 cdef class _Trie:
     """
@@ -64,10 +81,14 @@ cdef class _Trie:
     """
 
     cdef trie.Trie* _trie
+    cdef encode_func _encode
+    cdef decode_func _decode
+    cdef object _encode_context
+    cdef object _decode_context
 
     def __init__(self, arg=None, num_tries=DEFAULT_NUM_TRIES, binary=False,
                         cache_size=DEFAULT_CACHE, order=DEFAULT_ORDER,
-                        weights=None):
+                        weights=None, encode=None, decode=None):
         """
         ``arg`` can be one of the following:
 
@@ -81,8 +102,18 @@ cdef class _Trie:
         if self._trie:
             return
         self._trie = new trie.Trie()
+        if encode is not None:
+            if not callable(encode):
+                raise TypeError("'encode' must be callable")
+            self._encode_context = encode
+            self._encode = pyencode
+        if decode is not None:
+            if not callable(decode):
+                raise TypeError("'decode' must be callable")
+            self._decode_context = decode
+            self._decode = pydecode
 
-        byte_keys = (key.encode('utf8') for key in (arg or []))
+        byte_keys = (self._encode(key, <void *>self._encode_context) for key in (arg or []))
 
         self._build(
             byte_keys,
@@ -93,6 +124,9 @@ cdef class _Trie:
             order=order
         )
 
+    def __cinit__(self):
+        self._encode = uencode
+        self._decode = udecode
 
     def __dealloc__(self):
         if self._trie:
@@ -131,8 +165,8 @@ cdef class _Trie:
     def __len__(self):
         return self._trie.num_keys()
 
-    def __contains__(self, unicode key):
-        cdef bytes _key = key.encode('utf8')
+    def __contains__(self, object key):
+        cdef bytes _key = self._encode(key, <void *>self._encode_context)
         return self._contains(_key)
 
     cdef bint _contains(self, bytes key):
@@ -209,20 +243,20 @@ cdef class _Trie:
         self._trie.mmap(c_path)
         return self
 
-    cpdef list keys(self, unicode prefix=""):
+    cpdef list keys(self, object prefix=""):
         """
         Return a list with all keys with a prefix ``prefix``.
         """
         # non-generator inlined version of iterkeys()
         cdef list res = []
-        cdef unicode key
+        cdef object key
 
-        cdef bytes b_prefix = prefix.encode('utf8')
+        cdef bytes b_prefix = self._encode(prefix, <void *>self._encode_context)
         cdef agent.Agent ag
         ag.set_query(b_prefix)
 
         while self._trie.predictive_search(ag):
-            key = ag.key().ptr()[:ag.key().length()].decode('utf8')
+            key = self._decode(&ag.key(), <void *>self._decode_context)
             res.append(key)
 
         return res
@@ -233,12 +267,12 @@ cdef class Trie(_Trie):
      This trie stores unicode keys and assigns an unque ID to each key.
      """
 
-     cpdef int key_id(self, unicode key) except -1:
+     cpdef int key_id(self, object key) except -1:
          """
          Return unique auto-generated key index for a ``key``.
          Raises KeyError if key is not in this trie.
          """
-         cdef bytes _key = key.encode('utf8')
+         cdef bytes _key = self._encode(key, <void *>self._encode_context)
          cdef int res = self._key_id(_key)
          if res == -1:
              raise KeyError(key)
@@ -254,7 +288,7 @@ cdef class Trie(_Trie):
              self._trie.reverse_lookup(ag)
          except KeyError:
              raise KeyError(index)
-         return ag.key().ptr()[:ag.key().length()].decode('utf8')
+         return self._decode(&ag.key(), <void *>self._decode_context)
 
      cdef int _key_id(self, char* key):
          cdef bint res
@@ -265,19 +299,19 @@ cdef class Trie(_Trie):
              return -1
          return ag.key().id()
 
-     def iter_prefixes(self, unicode key):
+     def iter_prefixes(self, object key):
          """
          Return an iterator of all prefixes of a given key.
          """
          cdef agent.Agent ag
 
-         cdef bytes b_key = key.encode('utf8')
+         cdef bytes b_key = self._encode(key, <void *>self._encode_context)
          ag.set_query(b_key)
 
          while self._trie.common_prefix_search(ag):
-             yield ag.key().ptr()[:ag.key().length()].decode('utf8')
+             yield self._decode(&ag.key(), <void *>self._decode_context)
 
-     def prefixes(self, unicode key):
+     def prefixes(self, object key):
          """
          Return a list with all prefixes of a given key.
          """
@@ -285,28 +319,27 @@ cdef class Trie(_Trie):
          # this an inlined version of ``list(self.iter_prefixes(key))``
 
          cdef agent.Agent ag
-         cdef unicode prefix
+         cdef object prefix
          cdef list res = []
 
-         cdef bytes b_key = key.encode('utf8')
+         cdef bytes b_key = self._encode(key, <void *>self._encode_context)
          ag.set_query(b_key)
 
          while self._trie.common_prefix_search(ag):
-             prefix = ag.key().ptr()[:ag.key().length()].decode('utf8')
+             prefix = self._decode(&ag.key(), <void *>self._decode_context)
              res.append(prefix)
          return res
 
-     def iterkeys(self, unicode prefix=""):
+     def iterkeys(self, object prefix=""):
          """
          Return an iterator over keys that have a prefix ``prefix``.
          """
          cdef agent.Agent ag
-         cdef unicode key
-         cdef bytes b_prefix = prefix.encode('utf8')
+         cdef bytes b_prefix = self._encode(prefix, <void *>self._encode_context)
          ag.set_query(b_prefix)
 
          while self._trie.predictive_search(ag):
-             yield (ag.key().ptr()[:ag.key().length()]).decode('utf8')
+             yield self._decode(&ag.key(), <void *>self._decode_context)
 
 
 
@@ -443,8 +476,8 @@ cdef class BytesTrie(_Trie):
             )
         return res
 
-    cpdef list keys(self, unicode prefix=""):
-        cdef bytes b_prefix = prefix.encode('utf8')
+    cpdef list keys(self, object prefix=""):
+        cdef bytes b_prefix = (<unicode>prefix).encode('utf8')
         cdef unicode key
         cdef char* raw_key
         cdef list res = []

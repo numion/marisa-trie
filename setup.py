@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 import glob
 import itertools
+import sys
 from distutils.core import setup
 from distutils.extension import Extension
 
@@ -13,6 +14,9 @@ MARISA_FILES = [
 ]
 
 MARISA_FILES = list(itertools.chain(*(glob.glob(path) for path in MARISA_FILES)))
+extra_compile_args = []
+if sys.platform == 'win32':
+    extra_compile_args = ['/EHsc']
 
 setup(
     name="marisa-trie",
@@ -29,6 +33,7 @@ setup(
             sources = glob.glob('src/*.cpp') + MARISA_FILES,
             include_dirs=['lib'],
             language = "c++",
+            extra_compile_args=extra_compile_args,
         )
     ],
 

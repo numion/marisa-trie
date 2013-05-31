@@ -20,7 +20,7 @@ if sys.platform == 'win32':
 
 setup(
     name="marisa-trie",
-    version="0.4",
+    version="0.5",
     description="Static memory-efficient & fast Trie-like structures for Python (based on marisa-trie C++ library)",
     long_description = open('README.rst').read() + "\n\n" + open('CHANGES.rst').read(),
     author='Mikhail Korobov',
